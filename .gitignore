@@ -1,0 +1,18 @@
+# 数据库与索引
+*.db
+*.index
+
+# 临时文件与上传内容
+static/uploads/*
+!static/uploads/.gitkeep
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 虚拟环境
+venv/
+.env
+
+# 模型缓存 (根据你的代码路径)
+model/

@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+sqlalchemy
+passlib[cryptography]
+python-jose[cryptography]
+python-multipart
+numpy
+psutil
+soundfile
+funasr
+modelscope
+faiss-cpu
+openai
+torch

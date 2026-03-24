@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>VoiceAI - 智能会议系统</title>
+    <script src="/static/js/tailwind.js"></script>
+    <script src="/static/js/vue.global.js"></script>
+    <script src="/static/js/axios.min.js"></script>
+    <!-- 🟢 引入 Markdown 解析库 -->
+    <script src="/static/js/marked.min.js"></script>
+    
+    <style>
+        [v-cloak] { display: none; }
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .chat-bubble { position: relative; background: #ffffff; border-radius: 12px; padding: 16px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); border: 1px solid #f1f5f9; }
+        .drag-active { border-color: #3b82f6 !important; background-color: #eff6ff !important; transform: scale(1.02); }
+        .markdown-body h1, .markdown-body h2, .markdown-body h3 { font-weight: bold; margin-top: 1em; margin-bottom: 0.5em; color: #1e293b; }
+        .markdown-body h2 { font-size: 1.15em; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.3em; }
+        .markdown-body ul { list-style-type: disc; padding-left: 1.5em; margin-bottom: 1em; }
+        .markdown-body ol { list-style-type: decimal; padding-left: 1.5em; margin-bottom: 1em; }
+        .markdown-body li { margin-bottom: 0.25em; }
+        .markdown-body p { margin-bottom: 1em; line-height: 1.6; }
+        .markdown-body strong { font-weight: bold; color: #0f172a; }
+    </style>
+</head>
+<body class="bg-gray-50 font-sans text-gray-800 h-screen flex flex-col overflow-hidden">
+    <div id="app" v-cloak class="h-full flex flex-col relative">
+        
+        <!-- 🔐 登录/注册遮罩 -->
+        <div v-if="!isLoggedIn" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex justify-center items-center z-50">
+            <div class="bg-white rounded-2xl p-8 w-96 shadow-2xl">
+                <div class="text-center mb-6">
+                    <h2 class="text-2xl font-bold text-gray-800">VoiceAI</h2>
+                    <p class="text-sm text-gray-500 mt-1">{{ isLoginMode ? '欢迎回来，请登录' : '创建您的账号' }}</p>
+                </div>
+                <div class="space-y-4">
+                    <input v-model="authForm.username" type="text" placeholder="用户名" class="w-full px-4 py-3 rounded-lg border focus:ring-2 focus:ring-blue-500 outline-none">
+                    <input v-model="authForm.password" type="password" placeholder="密码" class="w-full px-4 py-3 rounded-lg border focus:ring-2 focus:ring-blue-500 outline-none" @keyup.enter="handleAuth">
+                    <button @click="handleAuth" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg transition">{{ isLoginMode ? '登 录' : '注 册' }}</button>
+                    <div class="text-center text-sm text-gray-500 mt-4 cursor-pointer hover:text-blue-600" @click="isLoginMode = !isLoginMode">{{ isLoginMode ? '没有账号？点击注册' : '已有账号？点击登录' }}</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ⚙️ LLM 大模型设置弹窗 -->
+        <div v-if="showSettings" class="fixed inset-0 bg-gray-900 bg-opacity-40 flex justify-center items-center z-[60]">
+            <div class="bg-white rounded-2xl p-6 w-[500px] shadow-2xl border">
+                <div class="flex justify-between items-center mb-4 border-b pb-2">
+                    <h3 class="font-bold text-lg text-gray-800">⚙️ 大模型接口配置</h3>
+                    <button @click="showSettings = false" class="text-gray-400 hover:text-red-500">✖</button>
+                </div>
+                <div class="space-y-3 text-sm">
+                    <div>
+                        <label class="block text-gray-600 font-medium mb-1">接口地址 (Base URL)</label>
+                        <input v-model="llmConfig.base_url" type="text" class="w-full border p-2 rounded bg-gray-50 focus:bg-white outline-none focus:ring-2 focus:ring-blue-400" placeholder="例如: https://api.deepseek.com">
+                    </div>
+                    <div>
+                        <label class="block text-gray-600 font-medium mb-1">API Key (密钥)</label>
+                        <input v-model="llmConfig.api_key" type="password" class="w-full border p-2 rounded bg-gray-50 focus:bg-white outline-none focus:ring-2 focus:ring-blue-400" placeholder="sk-xxxxxxxxxxx">
+                    </div>
+                    <div>
+                        <label class="block text-gray-600 font-medium mb-1">模型名称 (Model Name)</label>
+                        <input v-model="llmConfig.model_name" type="text" class="w-full border p-2 rounded bg-gray-50 focus:bg-white outline-none focus:ring-2 focus:ring-blue-400" placeholder="例如: deepseek-chat">
+                    </div>
+                    <div>
+                        <label class="block text-gray-600 font-medium mb-1">系统指令 (System Prompt)</label>
+                        <textarea v-model="llmConfig.system_prompt" rows="4" class="w-full border p-2 rounded bg-gray-50 focus:bg-white outline-none focus:ring-2 focus:ring-blue-400 custom-scrollbar"></textarea>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-3 mt-6">
+                    <button @click="showSettings = false" class="px-4 py-2 border rounded hover:bg-gray-100 text-sm">取消</button>
+                    <button @click="saveSettings" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-medium">保存配置</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 🧭 导航栏 -->
+        <nav class="bg-white shadow-sm px-6 py-3 flex justify-between items-center z-10">
+            <h1 class="text-xl font-bold text-gray-800 flex items-center gap-2"><span class="text-blue-600 text-2xl">🎙️</span> VoiceAI</h1>
+            <div v-if="isLoggedIn" class="flex gap-8 bg-gray-50 px-6 py-2 rounded-full border">
+                <span class="text-xs text-gray-500">CPU: <b class="text-gray-700">{{ sysMonitor.cpu }}%</b></span>
+                <span class="text-xs text-gray-500">内存: <b class="text-gray-700">{{ sysMonitor.ram }}%</b></span>
+                <span class="text-xs text-gray-500 border-l pl-4">后台队列: <b :class="sysMonitor.queue_size > 0 ? 'text-blue-600' : 'text-gray-700'">{{ sysMonitor.queue_size }} 个</b></span>
+            </div>
+            <div v-if="isLoggedIn" class="flex items-center gap-4">
+                <span class="text-sm font-medium">👋 {{ username }}</span>
+                <button @click="logout" class="text-sm text-red-500 hover:text-red-700 px-3 py-1 bg-red-50 rounded-lg">退出</button>
+            </div>
+        </nav>
+
+        <!-- 🟢 三栏布局 (2:4:4) -->
+        <div v-if="isLoggedIn" class="flex flex-1 overflow-hidden p-4 gap-4 w-full">
+            
+            <!-- ⬅️ 第一栏：任务列表 -->
+            <div class="flex-[2] min-w-0 flex flex-col gap-4">
+                <div 
+                    @dragover.prevent="dragActive = true" 
+                    @dragleave.prevent="dragActive = false" 
+                    @drop.prevent="handleDrop"
+                    :class="{'drag-active': dragActive}"
+                    class="border-2 border-dashed border-gray-300 rounded-xl p-6 text-center bg-white cursor-pointer hover:border-blue-400 relative transition-all duration-200">
+                    
+                    <input type="file" class="absolute inset-0 opacity-0 cursor-pointer" @change="handleFileSelect" accept=".mp3,.wav,.m4a" :disabled="isUploading">
+                    <div v-if="isUploading" class="text-blue-600 font-medium animate-pulse">正在极速上传...</div>
+                    <div v-else>
+                        <div class="text-3xl mb-1 transition-transform" :class="{'scale-125': dragActive}">📥</div>
+                        <p class="text-gray-700 font-medium text-sm">{{ dragActive ? '松开鼠标立即上传' : '点击或拖拽录音' }}</p>
+                    </div>
+                </div>
+
+                <div class="bg-white border rounded-xl flex-1 flex flex-col overflow-hidden shadow-sm">
+                    <div class="px-4 py-3 border-b bg-gray-50 flex justify-between items-center">
+                        <h3 class="font-bold text-sm text-gray-700">📜 历史记录</h3>
+                        <button @click="fetchTasks" class="text-blue-500 text-xs hover:underline">手动刷新</button>
+                    </div>
+                    <ul class="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
+                        <li v-for="task in tasks" :key="task.id" @click="currentTask = task" class="p-3 rounded-lg cursor-pointer transition flex flex-col gap-1" :class="currentTask?.id === task.id ? 'bg-blue-50 border-blue-200' : 'hover:bg-gray-100'">
+                            <div class="flex justify-between items-start">
+                                <span class="text-sm font-medium truncate pr-2" :title="task.filename">{{ task.filename }}</span>
+                                <span :class="{'bg-green-500':task.status==='completed','bg-orange-400 animate-ping':task.status==='processing','bg-gray-300':task.status==='pending'}" class="w-2 h-2 rounded-full mt-1 flex-shrink-0"></span>
+                            </div>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- ⏺️ 第二栏：文字转录区 -->
+            <div class="flex-[4] min-w-0 bg-white rounded-xl border shadow-sm flex flex-col overflow-hidden relative">
+                <div v-if="currentTask" class="h-full flex flex-col">
+                    <div class="px-6 py-3 border-b bg-gray-50 flex items-center justify-between shadow-sm z-10">
+                        <h2 class="font-bold text-lg text-gray-800 truncate pr-4 max-w-[40%]"># {{ currentTask.filename }}</h2>
+                        <audio ref="audioPlayer" v-if="currentTask.status === 'completed'" :src="'/' + currentTask.file_path" controls class="h-10 w-3/4 max-w-md bg-white rounded-full"></audio>
+                    </div>
+
+                    <div v-if="currentTask.status === 'completed'" class="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar bg-gray-50">
+                        <div v-for="msg in currentTask.result_json" :key="msg.id" class="flex gap-4">
+                            <div class="flex-shrink-0 mt-1">
+                                <div class="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-sm" :class="msg.name.includes('陌生人')||msg.name.includes('未知') ? 'bg-gray-400' : 'bg-blue-500'">
+                                    {{ msg.name.substring(0, 1) }}
+                                </div>
+                            </div>
+                            
+                            <div class="chat-bubble flex-1 group">
+                                <div class="flex items-center gap-3 mb-2 border-b pb-2 border-gray-100">
+                                    <span class="font-bold text-sm truncate max-w-[150px]" :class="msg.name.includes('陌生人') ? 'text-gray-600' : 'text-blue-700'" :title="msg.name">{{ msg.name }}</span>
+                                    <button @click="seekAudio(msg.start)" class="text-[11px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-md hover:bg-blue-100 flex-shrink-0">▶ {{ formatTime(msg.start) }}</button>
+                                    <button @click="labelSpeaker(msg)" class="text-[11px] bg-amber-50 text-amber-600 px-2 py-0.5 rounded-md hover:bg-amber-100 transition flex-shrink-0">✏️ 身份</button>
+                                    <button v-if="editingBlockId !== msg.id" @click="startEditText(msg)" class="opacity-0 group-hover:opacity-100 text-[11px] ml-auto text-gray-400 hover:text-blue-500 transition flex-shrink-0">✏️ 改错字</button>
+                                </div>
+
+                                <div v-if="editingBlockId === msg.id">
+                                    <textarea v-model="editTempText" rows="3" class="w-full border rounded-md p-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none"></textarea>
+                                    <div class="flex justify-end gap-2 mt-2">
+                                        <button @click="editingBlockId = null" class="text-xs text-gray-500 px-3 py-1 rounded hover:bg-gray-100">取消</button>
+                                        <button @click="saveText(msg)" class="text-xs bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600">保存</button>
+                                    </div>
+                                </div>
+                                <p v-else class="text-gray-700 text-[15px] leading-relaxed whitespace-pre-wrap">{{ msg.text }}</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div v-else-if="currentTask.status === 'processing' || currentTask.status === 'pending'" class="flex-1 flex flex-col items-center justify-center bg-gray-50">
+                        <div class="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                        <h3 class="text-xl font-bold text-gray-700 mt-4">{{ currentTask.status === 'pending' ? '正在后台排队中...' : 'AI 正在深度分析会话结构' }}</h3>
+                        <p class="text-gray-500 mt-2">您可以继续上传其他文件，系统会在后台自动完成</p>
+                    </div>
+                </div>
+                
+                <div v-else class="flex-1 flex flex-col items-center justify-center text-gray-400 bg-gray-50">
+                    <div class="text-6xl mb-4 opacity-20">💬</div><p>点击左侧记录预览智能转录结果</p>
+                </div>
+            </div>
+
+            <!-- ➡️ 第三栏：AI 智能纪要 (flex比例：4) -->
+            <div class="flex-[4] min-w-0 bg-white rounded-xl border shadow-sm flex flex-col overflow-hidden relative">
+                <!-- 🟢 纪要标题栏：增加设置按钮 -->
+                <div class="px-4 py-3 border-b bg-gray-50 flex justify-between items-center shadow-sm">
+                    <h3 class="font-bold text-gray-700">💡 AI 会议纪要</h3>
+                    <button @click="showSettings = true" class="text-gray-500 hover:text-blue-600 transition" title="配置大模型接口">⚙️ 配置</button>
+                </div>
+                
+                <div class="flex-1 overflow-y-auto p-5 custom-scrollbar bg-gray-50">
+                    <div v-if="!currentTask" class="text-gray-400 text-center text-sm mt-10">请先在左侧选择会议记录</div>
+                    <div v-else-if="currentTask.status !== 'completed'" class="text-gray-400 text-center text-sm mt-10">等待转录完成后可生成纪要</div>
+                    <div v-else class="flex flex-col h-full">
+                        
+                        <!-- 🟢 使用 v-html 渲染 Markdown -->
+                        <div v-if="currentTask.summary" class="markdown-body text-sm text-gray-800 flex-1" v-html="renderMarkdown(currentTask.summary)"></div>
+                        
+                        <div v-else class="flex flex-col items-center justify-center h-full gap-4 opacity-70 hover:opacity-100 transition">
+                            <img src="https://cdn-icons-png.flaticon.com/512/8660/8660447.png" class="w-16 h-16 grayscale">
+                            <button @click="generateSummary" :disabled="isGeneratingSummary" class="bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-bold py-2 px-6 rounded-full shadow-md transition disabled:bg-gray-400">
+                                {{ isGeneratingSummary ? '🚀 大模型正在思考...' : '✨ 一键生成纪要' }}
+                            </button>
+                            <p class="text-xs text-gray-400 text-center px-4">请确保右上角 ⚙️ 已配置 API Key</p>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, onMounted } = Vue;
+        axios.interceptors.request.use(config => {
+            const token = localStorage.getItem('token');
+            if (token) config.headers.Authorization = `Bearer ${token}`;
+            return config;
+        });
+
+        createApp({
+            setup() {
+                const isLoggedIn = ref(!!localStorage.getItem('token'));
+                const username = ref(localStorage.getItem('username') || '');
+                const isLoginMode = ref(true);
+                const authForm = ref({ username: '', password: '' });
+
+                const tasks = ref([]);
+                const currentTask = ref(null);
+                
+                const isUploading = ref(false);
+                const dragActive = ref(false);
+                const sysMonitor = ref({ cpu: 0, ram: 0, queue_size: 0 });
+
+                const audioPlayer = ref(null);
+                const editingBlockId = ref(null);
+                const editTempText = ref('');
+                const isGeneratingSummary = ref(false);
+
+                // 🟢 LLM 动态配置系统
+                const showSettings = ref(false);
+                const defaultPrompt = "你是一个专业的会议助理。请根据以下的会议发言记录，提取核心内容，生成一份结构清晰的会议纪要（包含：会议主旨、主要结论、待办事项等，请严格使用Markdown格式输出）。";
+                
+                // 从缓存读取，没有则赋予默认值（以 DeepSeek 为例）
+                const llmConfig = ref({
+                    base_url: localStorage.getItem('llm_base_url') || 'https://api.deepseek.com',
+                    api_key: localStorage.getItem('llm_api_key') || '',
+                    model_name: localStorage.getItem('llm_model_name') || 'deepseek-chat',
+                    system_prompt: localStorage.getItem('llm_system_prompt') || defaultPrompt
+                });
+
+                const saveSettings = () => {
+                    localStorage.setItem('llm_base_url', llmConfig.value.base_url);
+                    localStorage.setItem('llm_api_key', llmConfig.value.api_key);
+                    localStorage.setItem('llm_model_name', llmConfig.value.model_name);
+                    localStorage.setItem('llm_system_prompt', llmConfig.value.system_prompt);
+                    showSettings.value = false;
+                    alert("✅ 配置保存成功！");
+                };
+
+                // 🟢 Markdown 渲染器调用
+                const renderMarkdown = (text) => {
+                    if (!text) return "";
+                    return marked.parse(text);
+                };
+
+                const seekAudio = (seconds) => {
+                    if (audioPlayer.value) { audioPlayer.value.currentTime = seconds; audioPlayer.value.play(); }
+                };
+                
+                const formatTime = (seconds) => {
+                    if (!seconds && seconds !== 0) return "00:00";
+                    return `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`;
+                };
+
+                const handleAuth = async () => {
+                    if (!authForm.value.username || !authForm.value.password) { alert("请填写完整的用户名和密码！"); return; }
+                    try {
+                        const fd = new URLSearchParams(); fd.append('username', authForm.value.username); fd.append('password', authForm.value.password);
+                        if (!isLoginMode.value) { await axios.post('/api/register', fd); isLoginMode.value = true; }
+                        const res = await axios.post('/api/login', fd);
+                        localStorage.setItem('token', res.data.access_token); localStorage.setItem('username', res.data.username);
+                        isLoggedIn.value = true; username.value = res.data.username; authForm.value.password = '';
+                        fetchTasks();
+                    } catch (err) { alert("❌ " + (err.response?.data?.detail || '操作失败')); }
+                };
+                
+                const logout = () => { localStorage.removeItem('token'); localStorage.removeItem('username'); isLoggedIn.value = false; };
+
+                const fetchTasks = async () => {
+                    if (!isLoggedIn.value) return;
+                    try {
+                        const res = await axios.get('/api/tasks'); tasks.value = res.data;
+                        if (currentTask.value) {
+                            const updated = tasks.value.find(t => t.id === currentTask.value.id);
+                            if (updated) currentTask.value = updated;
+                        }
+                    } catch (e) { if (e.response?.status === 401) logout(); }
+                };
+
+                const uploadFileObj = async (file) => {
+                    if (!file) return;
+                    isUploading.value = true;
+                    const fd = new FormData(); fd.append('file', file);
+                    try { await axios.post('/api/upload', fd); fetchTasks(); } catch (e) { alert("上传失败"); } finally { isUploading.value = false; dragActive.value = false; }
+                };
+
+                const handleFileSelect = (e) => uploadFileObj(e.target.files[0]);
+                const handleDrop = (e) => { dragActive.value = false; uploadFileObj(e.dataTransfer.files[0]); };
+
+                const labelSpeaker = async (msg) => {
+                    const newName = prompt(`当前身份: 【${msg.name}】\n请输入新的身份名称:`, msg.name);
+                    if (!newName || newName.trim() === "" || newName === msg.name) return;
+                    const nameStr = newName.trim();
+
+                    if (currentTask.value && currentTask.value.result_json) {
+                        currentTask.value.result_json.forEach(m => { if (m.emb_hex === msg.emb_hex) m.name = nameStr; });
+                    }
+                    const fd = new FormData(); fd.append('name', nameStr); fd.append('emb_hex', msg.emb_hex); fd.append('task_id', currentTask.value.id);
+                    try { await axios.post('/api/label', fd); await fetchTasks(); } catch (e) { alert("标记失败"); }
+                };
+
+                const startEditText = (msg) => { editingBlockId.value = msg.id; editTempText.value = msg.text; };
+
+                const saveText = async (msg) => {
+                    msg.text = editTempText.value;
+                    editingBlockId.value = null;
+                    const fd = new FormData();
+                    fd.append('task_id', currentTask.value.id); fd.append('block_id', msg.id); fd.append('new_text', msg.text);
+                    try { await axios.post('/api/update_text', fd); } catch (e) { alert("文本保存失败"); }
+                };
+
+                // 🟢 动态传递 LLM 参数给后端
+                const generateSummary = async () => {
+                    if (!llmConfig.value.api_key) {
+                        alert("请先点击右上角 ⚙️ 配置您的 API Key！");
+                        showSettings.value = true;
+                        return;
+                    }
+
+                    isGeneratingSummary.value = true;
+                    const fd = new FormData();
+                    fd.append('task_id', currentTask.value.id);
+                    fd.append('api_key', llmConfig.value.api_key);
+                    fd.append('base_url', llmConfig.value.base_url);
+                    fd.append('model_name', llmConfig.value.model_name);
+                    fd.append('system_prompt', llmConfig.value.system_prompt);
+                    
+                    try {
+                        const res = await axios.post('/api/generate_summary', fd);
+                        currentTask.value.summary = res.data.summary;
+                    } catch (e) {
+                        alert("生成纪要失败: " + (e.response?.data?.detail || e.message));
+                    } finally {
+                        isGeneratingSummary.value = false;
+                    }
+                };
+
+                onMounted(() => {
+                    if (isLoggedIn.value) fetchTasks();
+                    setInterval(() => { if (isLoggedIn.value && !isGeneratingSummary.value) fetchTasks(); }, 4000);
+                    setInterval(async () => { if (isLoggedIn.value) try { const res = await axios.get('/api/monitor'); sysMonitor.value = res.data; } catch(e){} }, 2000);
+                });
+
+                return { 
+                    isLoggedIn, isLoginMode, authForm, username, handleAuth, logout,
+                    tasks, currentTask, isUploading, dragActive, sysMonitor, 
+                    handleFileSelect, handleDrop, labelSpeaker, fetchTasks, 
+                    audioPlayer, seekAudio, formatTime,
+                    editingBlockId, editTempText, startEditText, saveText,
+                    isGeneratingSummary, generateSummary,
+                    showSettings, llmConfig, saveSettings, renderMarkdown // 导出新的变量和方法
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
